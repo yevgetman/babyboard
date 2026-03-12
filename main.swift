@@ -260,6 +260,25 @@ final class AppState: ObservableObject {
             }
         }
 
+        // --- Cursor pushes shapes ---
+        if let cp = cursorPosition {
+            for shape in shapes {
+                let dx = shape.position.x - cp.x
+                let dy = shape.position.y - cp.y
+                let dist = sqrt(dx * dx + dy * dy)
+                let pushRadius = shape.size / 2 + 30
+                if dist < pushRadius && dist > 0.1 {
+                    let force: CGFloat = 200 * (1 - dist / pushRadius)
+                    shape.velocity.x += (dx / dist) * force * dt
+                    shape.velocity.y += (dy / dist) * force * dt
+                    if shape.settled {
+                        shape.settled = false
+                        shape.settledTime = nil
+                    }
+                }
+            }
+        }
+
         // --- Bubble physics ---
         for b in bubbles {
             b.position.x += b.velocity.x * dt
@@ -453,23 +472,49 @@ struct BabyView: View {
                         }
                     }
 
-                    // Smooth trail
-                    let trailWidth: CGFloat = 12
-                    if state.trail.count >= 2 {
-                        for i in 1..<state.trail.count {
-                            let prev = state.trail[i - 1]
-                            let curr = state.trail[i]
-                            guard curr.born.timeIntervalSince(prev.born) < 0.15 else { continue }
-                            let alpha = state.trailAlpha(curr, now)
-                            guard alpha > 0.01 else { continue }
-                            ctx.opacity = alpha
+                    // Smooth rainbow trail (midpoint-bezier smoothing, tapering width, shimmer)
+                    let maxTrailWidth: CGFloat = 14
+                    let trailCount = state.trail.count
+                    let timeShift = now.timeIntervalSinceReferenceDate * 0.3
+
+                    if trailCount >= 3 {
+                        for i in 1..<(trailCount - 1) {
+                            let p0 = state.trail[i - 1]
+                            let p1 = state.trail[i]
+                            let p2 = state.trail[i + 1]
+                            guard p1.born.timeIntervalSince(p0.born) < 0.15,
+                                  p2.born.timeIntervalSince(p1.born) < 0.15 else { continue }
+
+                            let age = now.timeIntervalSince(p1.born)
+                            let life = max(0, 1 - age / AppState.trailFade)
+                            guard life > 0.01 else { continue }
+
+                            // Taper width with age
+                            let width = maxTrailWidth * life
+
+                            // Rainbow shimmer: hue based on trail position + time
+                            let normPos = Double(i) / Double(trailCount)
+                            let hue = (normPos * 1.5 + timeShift).truncatingRemainder(dividingBy: 1.0)
+                            let trailColor = Color(hue: abs(hue), saturation: 0.35, brightness: 0.92)
+
+                            ctx.opacity = life * 0.85
+
+                            // Smooth bezier through midpoints
+                            let mid1 = CGPoint(
+                                x: (p0.position.x + p1.position.x) / 2,
+                                y: (p0.position.y + p1.position.y) / 2
+                            )
+                            let mid2 = CGPoint(
+                                x: (p1.position.x + p2.position.x) / 2,
+                                y: (p1.position.y + p2.position.y) / 2
+                            )
                             var seg = Path()
-                            seg.move(to: prev.position)
-                            seg.addLine(to: curr.position)
+                            seg.move(to: mid1)
+                            seg.addQuadCurve(to: mid2, control: p1.position)
                             ctx.stroke(
                                 seg,
-                                with: .color(curr.color),
-                                style: StrokeStyle(lineWidth: trailWidth, lineCap: .round, lineJoin: .round)
+                                with: .color(trailColor),
+                                style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
                             )
                         }
                     }
