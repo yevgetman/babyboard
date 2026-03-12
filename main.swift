@@ -110,9 +110,20 @@ final class AppState: ObservableObject {
     // MARK: Trail
 
     func addTrailPoint(at p: CGPoint) {
+        // Smooth incoming position toward the previous point to dampen kinks
+        let smoothed: CGPoint
+        if let last = trail.last {
+            let k: CGFloat = 0.4 // 0 = fully smoothed, 1 = raw input
+            smoothed = CGPoint(
+                x: last.position.x + (p.x - last.position.x) * k,
+                y: last.position.y + (p.y - last.position.y) * k
+            )
+        } else {
+            smoothed = p
+        }
         let c = Self.palette[(colorIndex / 20) % Self.palette.count]
         colorIndex += 1
-        trail.append(TrailPoint(position: p, color: c, born: Date()))
+        trail.append(TrailPoint(position: smoothed, color: c, born: Date()))
         if trail.count > 300 { trail.removeFirst(trail.count - 300) }
     }
 
