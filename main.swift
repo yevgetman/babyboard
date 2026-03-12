@@ -85,9 +85,12 @@ final class AppState: ObservableObject {
     @Published var cursorPosition: CGPoint? = nil
     @Published var dragStart: CGPoint? = nil
     @Published var dragCurrent: CGPoint? = nil
+    @Published var showBanner = true
 
     private var colorIndex = 0
     private var lastTick: Date = Date()
+    private var prevCursorPos: CGPoint? = nil
+    private var cursorVelocity: CGPoint = .zero
 
     static let palette: [Color] = [
         Color(red: 0.95, green: 0.76, blue: 0.76), // soft pink
@@ -260,17 +263,35 @@ final class AppState: ObservableObject {
             }
         }
 
+        // --- Cursor velocity tracking ---
+        if let cp = cursorPosition, let prev = prevCursorPos, dt > 0 {
+            cursorVelocity = CGPoint(
+                x: (cp.x - prev.x) / dt,
+                y: (cp.y - prev.y) / dt
+            )
+        }
+        prevCursorPos = cursorPosition
+
         // --- Cursor pushes shapes ---
         if let cp = cursorPosition {
             for shape in shapes {
                 let dx = shape.position.x - cp.x
                 let dy = shape.position.y - cp.y
                 let dist = sqrt(dx * dx + dy * dy)
-                let pushRadius = shape.size / 2 + 30
+                let pushRadius = shape.size / 2 + 40
                 if dist < pushRadius && dist > 0.1 {
-                    let force: CGFloat = 200 * (1 - dist / pushRadius)
+                    // Radial push away from cursor
+                    let force: CGFloat = 2000 * (1 - dist / pushRadius)
                     shape.velocity.x += (dx / dist) * force * dt
                     shape.velocity.y += (dy / dist) * force * dt
+
+                    // Transfer cursor momentum for "hit" feel
+                    let cursorSpeed = sqrt(cursorVelocity.x * cursorVelocity.x + cursorVelocity.y * cursorVelocity.y)
+                    if cursorSpeed > 20 {
+                        shape.velocity.x += cursorVelocity.x * 0.2
+                        shape.velocity.y += cursorVelocity.y * 0.2
+                    }
+
                     if shape.settled {
                         shape.settled = false
                         shape.settledTime = nil
@@ -344,7 +365,6 @@ extension Notification.Name {
 struct BabyView: View {
     @ObservedObject var state: AppState
     @State private var showExitConfirm = false
-    @State private var showBanner = true
     private let bg = Color(red: 0.98, green: 0.97, blue: 0.95)
 
     var body: some View {
@@ -489,8 +509,9 @@ struct BabyView: View {
                             let life = max(0, 1 - age / AppState.trailFade)
                             guard life > 0.01 else { continue }
 
-                            // Taper width with age
-                            let width = maxTrailWidth * life
+                            // Taper width: thick near cursor (end of array), thin at tail
+                            let posFrac = CGFloat(i) / CGFloat(trailCount - 1)
+                            let width = maxTrailWidth * posFrac
 
                             // Rainbow shimmer: hue based on trail position + time
                             let normPos = Double(i) / Double(trailCount)
@@ -586,9 +607,9 @@ struct BabyView: View {
             }
 
             // Instruction banner (top)
-            if showBanner {
+            if state.showBanner {
                 VStack {
-                    InfoBanner(onDismiss: { withAnimation { showBanner = false } })
+                    InfoBanner(onDismiss: { withAnimation { state.showBanner = false } })
                     Spacer()
                 }
                 .ignoresSafeArea()
@@ -597,7 +618,7 @@ struct BabyView: View {
         }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
-                withAnimation { showBanner = false }
+                withAnimation { state.showBanner = false }
             }
         }
     }
@@ -719,6 +740,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var lastMouse: Date = .distantPast
     var allowTermination = false
     var frameCount = 0
+    var cursorIsHidden = true
+    let bannerHeight: CGFloat = 60
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let scr = NSScreen.main!.frame
@@ -800,11 +823,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return e
         }
 
-        // Left mouse down -> start drag tracking
+        // Left mouse down -> start drag tracking (skip banner zone)
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] e in
+            guard let self else { return e }
             let h = NSScreen.main!.frame.height
             let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
-            self?.state.startDrag(at: pos)
+            if self.state.showBanner && pos.y < self.bannerHeight {
+                return e // let SwiftUI handle banner clicks
+            }
+            self.state.startDrag(at: pos)
             return e
         }
 
@@ -817,11 +844,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return e
         }
 
-        // Left mouse up -> end drag or spawn shape
+        // Left mouse up -> end drag or spawn shape (skip banner zone)
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] e in
             guard let self else { return e }
             let h = NSScreen.main!.frame.height
             let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
+            if self.state.showBanner && pos.y < self.bannerHeight {
+                return e
+            }
             if let start = self.state.dragStart {
                 let dx = pos.x - start.x
                 let dy = pos.y - start.y
@@ -864,6 +894,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let now = Date()
         let h = NSScreen.main!.frame.height
         let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
+
+        // Show system cursor over banner, hide elsewhere
+        if state.showBanner && pos.y < bannerHeight {
+            if cursorIsHidden {
+                NSCursor.unhide()
+                cursorIsHidden = false
+            }
+            state.cursorPosition = nil
+            return
+        } else if !cursorIsHidden {
+            NSCursor.hide()
+            cursorIsHidden = true
+        }
+
         state.cursorPosition = pos
         guard now.timeIntervalSince(lastMouse) > 0.016 else { return }
         lastMouse = now
