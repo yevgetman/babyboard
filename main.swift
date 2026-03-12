@@ -280,16 +280,16 @@ final class AppState: ObservableObject {
                 let dist = sqrt(dx * dx + dy * dy)
                 let pushRadius = shape.size / 2 + 40
                 if dist < pushRadius && dist > 0.1 {
-                    // Radial push away from cursor
-                    let force: CGFloat = 2000 * (1 - dist / pushRadius)
+                    // Gentle radial push away from cursor
+                    let force: CGFloat = 600 * (1 - dist / pushRadius)
                     shape.velocity.x += (dx / dist) * force * dt
                     shape.velocity.y += (dy / dist) * force * dt
 
-                    // Transfer cursor momentum for "hit" feel
+                    // Soft momentum transfer from cursor movement
                     let cursorSpeed = sqrt(cursorVelocity.x * cursorVelocity.x + cursorVelocity.y * cursorVelocity.y)
                     if cursorSpeed > 20 {
-                        shape.velocity.x += cursorVelocity.x * 0.2
-                        shape.velocity.y += cursorVelocity.y * 0.2
+                        shape.velocity.x += cursorVelocity.x * 0.06
+                        shape.velocity.y += cursorVelocity.y * 0.06
                     }
 
                     if shape.settled {
@@ -493,7 +493,7 @@ struct BabyView: View {
                     }
 
                     // Smooth rainbow trail (midpoint-bezier smoothing, tapering width, shimmer)
-                    let maxTrailWidth: CGFloat = 14
+                    let maxTrailWidth: CGFloat = 28
                     let trailCount = state.trail.count
                     let timeShift = now.timeIntervalSinceReferenceDate * 0.3
 
