@@ -493,7 +493,7 @@ struct BabyView: View {
                     }
 
                     // Smooth rainbow trail (midpoint-bezier smoothing, tapering width, shimmer)
-                    let maxTrailWidth: CGFloat = 28
+                    let maxTrailWidth: CGFloat = 40
                     let trailCount = state.trail.count
                     let timeShift = now.timeIntervalSinceReferenceDate * 0.3
 
@@ -509,9 +509,9 @@ struct BabyView: View {
                             let life = max(0, 1 - age / AppState.trailFade)
                             guard life > 0.01 else { continue }
 
-                            // Taper width: thick near cursor (end of array), thin at tail
+                            // Taper width: thick near cursor, rapid falloff toward tail
                             let posFrac = CGFloat(i) / CGFloat(trailCount - 1)
-                            let width = maxTrailWidth * posFrac
+                            let width = maxTrailWidth * posFrac * posFrac
 
                             // Rainbow shimmer: hue based on trail position + time
                             let normPos = Double(i) / Double(trailCount)
