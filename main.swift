@@ -151,7 +151,7 @@ final class AppState: ObservableObject {
             position: pos,
             color: Self.palette.randomElement()!,
             kind: .random(in: 0...2),
-            size: .random(in: 40...90)
+            size: .random(in: 40...160)
         ))
         if shapes.count > 40 { shapes.removeFirst() }
     }
