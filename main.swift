@@ -9,12 +9,67 @@ struct TrailPoint {
     let born: Date
 }
 
-struct BabyShape: Identifiable {
+class BabyShape: Identifiable {
     let id = UUID()
-    let position: CGPoint
+    var position: CGPoint
     let color: Color
     let kind: Int // 0=circle, 1=roundedRect, 2=triangle
     let size: CGFloat
+    let born: Date
+    var velocity: CGPoint
+    var settled = false
+    var settledTime: Date? = nil
+
+    init(position: CGPoint, color: Color, kind: Int, size: CGFloat) {
+        self.position = position
+        self.color = color
+        self.kind = kind
+        self.size = size
+        self.born = Date()
+        self.velocity = CGPoint(x: .random(in: -60...60), y: .random(in: -80...0))
+    }
+}
+
+class Bubble: Identifiable {
+    let id = UUID()
+    var position: CGPoint
+    var velocity: CGPoint
+    let color: Color
+    let radius: CGFloat
+
+    init(screenSize: CGSize) {
+        self.radius = .random(in: 28...55)
+        // Spawn from a random edge
+        let edge = Int.random(in: 0...3)
+        switch edge {
+        case 0: position = CGPoint(x: -radius, y: .random(in: radius...(screenSize.height - radius)))
+        case 1: position = CGPoint(x: screenSize.width + radius, y: .random(in: radius...(screenSize.height - radius)))
+        case 2: position = CGPoint(x: .random(in: radius...(screenSize.width - radius)), y: -radius)
+        default: position = CGPoint(x: .random(in: radius...(screenSize.width - radius)), y: screenSize.height + radius)
+        }
+        let speed: CGFloat = .random(in: 20...45)
+        let angle = CGFloat.random(in: 0...(2 * .pi))
+        self.velocity = CGPoint(x: cos(angle) * speed, y: sin(angle) * speed)
+        self.color = AppState.palette.randomElement()!
+    }
+}
+
+struct BubbleParticle {
+    let position: CGPoint
+    let velocity: CGPoint
+    let color: Color
+    let size: CGFloat
+    let born: Date
+}
+
+struct Ribbon: Identifiable {
+    let id = UUID()
+    let startPoint: CGPoint
+    let endPoint: CGPoint
+    let control1: CGPoint
+    let control2: CGPoint
+    let color: Color
+    let width: CGFloat
     let born: Date
 }
 
@@ -23,10 +78,16 @@ struct BabyShape: Identifiable {
 final class AppState: ObservableObject {
     @Published var trail: [TrailPoint] = []
     @Published var shapes: [BabyShape] = []
+    @Published var bubbles: [Bubble] = []
+    @Published var bubbleParticles: [BubbleParticle] = []
+    @Published var ribbons: [Ribbon] = []
     @Published var exitProgress: Double = 0
     @Published var cursorPosition: CGPoint? = nil
+    @Published var dragStart: CGPoint? = nil
+    @Published var dragCurrent: CGPoint? = nil
 
     private var colorIndex = 0
+    private var lastTick: Date = Date()
 
     static let palette: [Color] = [
         Color(red: 0.95, green: 0.76, blue: 0.76), // soft pink
@@ -39,34 +100,17 @@ final class AppState: ObservableObject {
 
     static let trailFade: TimeInterval = 2.0
     static let shapeFade: TimeInterval = 3.0
+    static let ribbonFade: TimeInterval = 4.0
+    static let bubbleParticleFade: TimeInterval = 0.6
+    static let maxBubbles = 8
+
+    // MARK: Trail
 
     func addTrailPoint(at p: CGPoint) {
         let c = Self.palette[(colorIndex / 20) % Self.palette.count]
         colorIndex += 1
         trail.append(TrailPoint(position: p, color: c, born: Date()))
         if trail.count > 300 { trail.removeFirst(trail.count - 300) }
-    }
-
-    func addShape(at p: CGPoint? = nil) {
-        let sz = NSScreen.main?.frame.size ?? CGSize(width: 1440, height: 900)
-        let pos = p ?? CGPoint(
-            x: .random(in: 60...(sz.width - 60)),
-            y: .random(in: 60...(sz.height - 60))
-        )
-        shapes.append(BabyShape(
-            position: pos,
-            color: Self.palette.randomElement()!,
-            kind: .random(in: 0...2),
-            size: .random(in: 40...90),
-            born: Date()
-        ))
-        if shapes.count > 20 { shapes.removeFirst() }
-    }
-
-    func prune() {
-        let now = Date()
-        trail.removeAll { now.timeIntervalSince($0.born) > Self.trailFade }
-        shapes.removeAll { now.timeIntervalSince($0.born) > Self.shapeFade }
     }
 
     func trailAlpha(_ t: TrailPoint, _ now: Date) -> Double {
@@ -77,8 +121,194 @@ final class AppState: ObservableObject {
         trail.last?.color ?? Self.palette[0]
     }
 
+    // MARK: Shapes
+
+    func addShape(at p: CGPoint? = nil, jitter: CGFloat = 0) {
+        let sz = NSScreen.main?.frame.size ?? CGSize(width: 1440, height: 900)
+        var pos = p ?? CGPoint(
+            x: .random(in: 60...(sz.width - 60)),
+            y: .random(in: 60...(sz.height * 0.5))
+        )
+        if jitter > 0 {
+            pos.x += .random(in: -jitter...jitter)
+            pos.y += .random(in: -jitter...jitter)
+        }
+        shapes.append(BabyShape(
+            position: pos,
+            color: Self.palette.randomElement()!,
+            kind: .random(in: 0...2),
+            size: .random(in: 40...90)
+        ))
+        if shapes.count > 40 { shapes.removeFirst() }
+    }
+
     func shapeAlpha(_ s: BabyShape, _ now: Date) -> Double {
-        max(0, 1 - now.timeIntervalSince(s.born) / Self.shapeFade)
+        if let st = s.settledTime {
+            return max(0, 1 - now.timeIntervalSince(st) / Self.shapeFade)
+        }
+        // Still in motion — fully visible, but safety cap at 15s
+        let age = now.timeIntervalSince(s.born)
+        if age > 15 { return max(0, 1 - (age - 15) / Self.shapeFade) }
+        return 1.0
+    }
+
+    // MARK: Ribbons
+
+    func startDrag(at point: CGPoint) {
+        dragStart = point
+        dragCurrent = point
+    }
+
+    func updateDrag(to point: CGPoint) {
+        dragCurrent = point
+    }
+
+    func endDrag(at point: CGPoint) {
+        guard let start = dragStart else { return }
+        let dx = point.x - start.x
+        let dy = point.y - start.y
+        let dist = sqrt(dx * dx + dy * dy)
+        guard dist > 20 else {
+            dragStart = nil
+            dragCurrent = nil
+            return
+        }
+        let midX = (start.x + point.x) / 2
+        let midY = (start.y + point.y) / 2
+        let perpX = -dy * 0.3
+        let perpY = dx * 0.3
+        ribbons.append(Ribbon(
+            startPoint: start,
+            endPoint: point,
+            control1: CGPoint(x: midX + perpX, y: midY + perpY),
+            control2: CGPoint(x: midX - perpX, y: midY - perpY),
+            color: Self.palette.randomElement()!,
+            width: .random(in: 6...14),
+            born: Date()
+        ))
+        if ribbons.count > 15 { ribbons.removeFirst() }
+        dragStart = nil
+        dragCurrent = nil
+    }
+
+    func ribbonAlpha(_ r: Ribbon, _ now: Date) -> Double {
+        max(0, 1 - now.timeIntervalSince(r.born) / Self.ribbonFade)
+    }
+
+    // MARK: Bubbles
+
+    func popBubble(_ b: Bubble) {
+        let count = Int.random(in: 8...12)
+        let now = Date()
+        for i in 0..<count {
+            let angle = (CGFloat(i) / CGFloat(count)) * 2 * .pi + .random(in: -0.3...0.3)
+            let speed: CGFloat = .random(in: 60...150)
+            bubbleParticles.append(BubbleParticle(
+                position: b.position,
+                velocity: CGPoint(x: cos(angle) * speed, y: sin(angle) * speed),
+                color: b.color,
+                size: .random(in: 4...8),
+                born: now
+            ))
+        }
+    }
+
+    // MARK: Physics Tick (called ~60fps)
+
+    func tick() {
+        let now = Date()
+        let dt = CGFloat(now.timeIntervalSince(lastTick))
+        lastTick = now
+        guard dt > 0, dt < 0.5 else { return }
+
+        let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1440, height: 900)
+
+        // --- Shape physics ---
+        let gravity: CGFloat = 120
+        let bounceDamping: CGFloat = 0.5
+        let settleThreshold: CGFloat = 10
+
+        for shape in shapes {
+            guard !shape.settled else { continue }
+            shape.velocity.y += gravity * dt
+            shape.position.x += shape.velocity.x * dt
+            shape.position.y += shape.velocity.y * dt
+
+            let half = shape.size / 2
+            if shape.position.x < half {
+                shape.position.x = half
+                shape.velocity.x = abs(shape.velocity.x) * bounceDamping
+            } else if shape.position.x > screenSize.width - half {
+                shape.position.x = screenSize.width - half
+                shape.velocity.x = -abs(shape.velocity.x) * bounceDamping
+            }
+            if shape.position.y > screenSize.height - half {
+                shape.position.y = screenSize.height - half
+                shape.velocity.y = -abs(shape.velocity.y) * bounceDamping
+                shape.velocity.x *= 0.9
+            }
+            if shape.position.y < half {
+                shape.position.y = half
+                shape.velocity.y = abs(shape.velocity.y) * bounceDamping
+            }
+
+            let speed = sqrt(shape.velocity.x * shape.velocity.x + shape.velocity.y * shape.velocity.y)
+            if speed < settleThreshold && shape.position.y > screenSize.height - half - 2 {
+                shape.settled = true
+                shape.settledTime = now
+                shape.velocity = .zero
+            }
+        }
+
+        // --- Bubble physics ---
+        for b in bubbles {
+            b.position.x += b.velocity.x * dt
+            b.position.y += b.velocity.y * dt
+            if b.position.x < b.radius { b.velocity.x = abs(b.velocity.x) }
+            if b.position.x > screenSize.width - b.radius { b.velocity.x = -abs(b.velocity.x) }
+            if b.position.y < b.radius { b.velocity.y = abs(b.velocity.y) }
+            if b.position.y > screenSize.height - b.radius { b.velocity.y = -abs(b.velocity.y) }
+        }
+
+        // Cursor pops bubbles
+        if let cp = cursorPosition {
+            bubbles.removeAll { b in
+                let dx = b.position.x - cp.x
+                let dy = b.position.y - cp.y
+                if sqrt(dx * dx + dy * dy) < b.radius + 18 {
+                    popBubble(b)
+                    return true
+                }
+                return false
+            }
+        }
+
+        // Respawn bubbles
+        if bubbles.count < Self.maxBubbles {
+            if Double.random(in: 0...1) < Double(dt) * 0.5 {
+                bubbles.append(Bubble(screenSize: screenSize))
+            }
+        }
+
+        // Prune old bubble particles
+        bubbleParticles.removeAll { now.timeIntervalSince($0.born) > Self.bubbleParticleFade }
+        if bubbleParticles.count > 100 { bubbleParticles.removeFirst(bubbleParticles.count - 100) }
+
+        objectWillChange.send()
+    }
+
+    // MARK: Prune (called ~1/sec)
+
+    func prune() {
+        let now = Date()
+        trail.removeAll { now.timeIntervalSince($0.born) > Self.trailFade }
+        shapes.removeAll { s in
+            if let st = s.settledTime {
+                return now.timeIntervalSince(st) > Self.shapeFade
+            }
+            return now.timeIntervalSince(s.born) > 18
+        }
+        ribbons.removeAll { now.timeIntervalSince($0.born) > Self.ribbonFade }
     }
 
     func requestExit() {
@@ -107,7 +337,50 @@ struct BabyView: View {
                     // Background
                     ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(bg))
 
-                    // Shapes (drawn first, behind trail)
+                    // Bubbles (behind everything interactive)
+                    for b in state.bubbles {
+                        ctx.opacity = 0.5
+                        let br = CGRect(
+                            x: b.position.x - b.radius,
+                            y: b.position.y - b.radius,
+                            width: b.radius * 2, height: b.radius * 2
+                        )
+                        ctx.fill(Path(ellipseIn: br), with: .color(b.color))
+                        // Glossy highlight
+                        ctx.opacity = 0.3
+                        let hr = b.radius * 0.4
+                        ctx.fill(
+                            Path(ellipseIn: CGRect(
+                                x: b.position.x - hr * 0.5,
+                                y: b.position.y - b.radius * 0.55,
+                                width: hr, height: hr
+                            )),
+                            with: .color(.white)
+                        )
+                        // Ring
+                        ctx.opacity = 0.3
+                        ctx.stroke(
+                            Path(ellipseIn: br),
+                            with: .color(.white),
+                            style: StrokeStyle(lineWidth: 1.5)
+                        )
+                    }
+
+                    // Bubble pop particles
+                    for p in state.bubbleParticles {
+                        let age = CGFloat(now.timeIntervalSince(p.born))
+                        let alpha = max(0, 1 - age / CGFloat(AppState.bubbleParticleFade))
+                        guard alpha > 0.01 else { continue }
+                        let px = p.position.x + p.velocity.x * age
+                        let py = p.position.y + p.velocity.y * age
+                        ctx.opacity = Double(alpha)
+                        ctx.fill(
+                            Path(ellipseIn: CGRect(x: px - p.size / 2, y: py - p.size / 2, width: p.size, height: p.size)),
+                            with: .color(p.color)
+                        )
+                    }
+
+                    // Shapes (with physics positions)
                     for s in state.shapes {
                         let a = state.shapeAlpha(s, now)
                         guard a > 0.01 else { continue }
@@ -135,13 +408,57 @@ struct BabyView: View {
                         }
                     }
 
-                    // Smooth trail (drawn on top of shapes)
+                    // Ribbons
+                    for r in state.ribbons {
+                        let a = state.ribbonAlpha(r, now)
+                        guard a > 0.01 else { continue }
+                        var path = Path()
+                        path.move(to: r.startPoint)
+                        path.addCurve(to: r.endPoint, control1: r.control1, control2: r.control2)
+                        ctx.opacity = a * 0.7
+                        ctx.stroke(
+                            path,
+                            with: .color(r.color),
+                            style: StrokeStyle(lineWidth: r.width, lineCap: .round, lineJoin: .round)
+                        )
+                        ctx.opacity = a * 0.3
+                        ctx.stroke(
+                            path,
+                            with: .color(.white),
+                            style: StrokeStyle(lineWidth: r.width * 0.3, lineCap: .round)
+                        )
+                    }
+
+                    // Live drag preview (rubber band)
+                    if let start = state.dragStart, let current = state.dragCurrent {
+                        let dx = current.x - start.x
+                        let dy = current.y - start.y
+                        let dist = sqrt(dx * dx + dy * dy)
+                        if dist > 10 {
+                            let midX = (start.x + current.x) / 2
+                            let midY = (start.y + current.y) / 2
+                            var preview = Path()
+                            preview.move(to: start)
+                            preview.addCurve(
+                                to: current,
+                                control1: CGPoint(x: midX - dy * 0.3, y: midY + dx * 0.3),
+                                control2: CGPoint(x: midX + dy * 0.3, y: midY - dx * 0.3)
+                            )
+                            ctx.opacity = 0.4
+                            ctx.stroke(
+                                preview,
+                                with: .color(state.cursorColor),
+                                style: StrokeStyle(lineWidth: 8, lineCap: .round, dash: [12, 8])
+                            )
+                        }
+                    }
+
+                    // Smooth trail
                     let trailWidth: CGFloat = 12
                     if state.trail.count >= 2 {
                         for i in 1..<state.trail.count {
                             let prev = state.trail[i - 1]
                             let curr = state.trail[i]
-                            // Don't connect points with large time gaps (mouse paused)
                             guard curr.born.timeIntervalSince(prev.born) < 0.15 else { continue }
                             let alpha = state.trailAlpha(curr, now)
                             guard alpha > 0.01 else { continue }
@@ -161,13 +478,11 @@ struct BabyView: View {
 
                     // Custom star cursor
                     if let cp = state.cursorPosition {
-                        // Soft glow
                         ctx.opacity = 0.25
                         ctx.fill(
                             Path(ellipseIn: CGRect(x: cp.x - 26, y: cp.y - 26, width: 52, height: 52)),
                             with: .color(state.cursorColor)
                         )
-                        // Star shape
                         ctx.opacity = 1.0
                         let outerR: CGFloat = 18, innerR: CGFloat = 8
                         var star = Path()
@@ -189,10 +504,11 @@ struct BabyView: View {
                         )
                     }
 
-                    // Exit progress indicator (tiny bar, top-right)
+                    // Exit progress indicator
                     if state.exitProgress > 0 {
                         let w: CGFloat = 100, h: CGFloat = 4
                         let x = size.width - w - 16, y: CGFloat = 16
+                        ctx.opacity = 1
                         ctx.fill(
                             Path(roundedRect: CGRect(x: x, y: y, width: w, height: h), cornerRadius: 2),
                             with: .color(.gray.opacity(0.25))
@@ -235,7 +551,6 @@ struct BabyView: View {
             }
         }
         .onAppear {
-            // Auto-dismiss banner after 60 seconds
             DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
                 withAnimation { showBanner = false }
             }
@@ -286,7 +601,6 @@ struct ExitTapZone: View {
     private let tapWindow: TimeInterval = 2.0
 
     var body: some View {
-        // Invisible tap target
         Color.clear
             .contentShape(Rectangle())
             .onTapGesture {
@@ -356,9 +670,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var escDown = false
     var exitTimer: Timer?
     var exitStart: Date?
-    var pruneTimer: Timer?
+    var tickTimer: Timer?
     var lastMouse: Date = .distantPast
     var allowTermination = false
+    var frameCount = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let scr = NSScreen.main!.frame
@@ -376,7 +691,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(rootView: BabyView(state: state))
         window.makeKeyAndOrderFront(nil)
 
-        // Kiosk mode: hide everything, block system shortcuts
         NSApp.presentationOptions = [
             .hideDock,
             .hideMenuBar,
@@ -391,12 +705,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMonitors()
 
-        // Periodic cleanup of expired dots/shapes
-        pruneTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.state.prune()
+        // 60fps tick for physics + bubbles; prune every ~1s
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.state.tick()
+            self.frameCount += 1
+            if self.frameCount % 60 == 0 {
+                self.state.prune()
+            }
         }
 
-        // If app somehow loses focus, reclaim it
         NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: nil, queue: .main
@@ -404,7 +722,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate()
         }
 
-        // Listen for UI-triggered exit
         NotificationCenter.default.addObserver(
             forName: .babyBoardExit,
             object: nil, queue: .main
@@ -432,34 +749,69 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Event Monitors
 
     func setupMonitors() {
-        // Mouse movement -> trail dots
-        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]) { [weak self] e in
+        // Mouse movement -> trail + cursor
+        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .rightMouseDragged, .otherMouseDragged]) { [weak self] e in
             self?.onMouse(e)
             return e
         }
 
-        // Mouse clicks -> shape at click location
-        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] e in
+        // Left mouse down -> start drag tracking
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] e in
+            let h = NSScreen.main!.frame.height
+            let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
+            self?.state.startDrag(at: pos)
+            return e
+        }
+
+        // Left mouse drag -> update drag + trail
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] e in
+            let h = NSScreen.main!.frame.height
+            let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
+            self?.state.updateDrag(to: pos)
+            self?.onMouse(e)
+            return e
+        }
+
+        // Left mouse up -> end drag or spawn shape
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] e in
+            guard let self else { return e }
+            let h = NSScreen.main!.frame.height
+            let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
+            if let start = self.state.dragStart {
+                let dx = pos.x - start.x
+                let dy = pos.y - start.y
+                if sqrt(dx * dx + dy * dy) > 20 {
+                    self.state.endDrag(at: pos)
+                } else {
+                    self.state.addShape(at: pos)
+                    self.state.dragStart = nil
+                    self.state.dragCurrent = nil
+                }
+            }
+            return e
+        }
+
+        // Right/other clicks -> shape
+        NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .otherMouseDown]) { [weak self] e in
             let h = NSScreen.main!.frame.height
             self?.state.addShape(at: CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y))
             return e
         }
 
-        // Keyboard -> shapes (and exit combo detection)
+        // Keyboard -> shapes (number keys spawn count) + escape
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             self?.onKeyDown(e)
-            return nil // consume all keys
+            return nil
         }
 
         NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] e in
-            if e.keyCode == 53 { // Escape released
+            if e.keyCode == 53 {
                 self?.escDown = false
                 self?.cancelExit()
             }
             return nil
         }
 
-        // Consume scroll events so they don't leak through
         NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { _ in nil }
     }
 
@@ -468,13 +820,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let h = NSScreen.main!.frame.height
         let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
         state.cursorPosition = pos
-        guard now.timeIntervalSince(lastMouse) > 0.016 else { return } // ~60fps
+        guard now.timeIntervalSince(lastMouse) > 0.016 else { return }
         lastMouse = now
         state.addTrailPoint(at: pos)
     }
 
     func onKeyDown(_ e: NSEvent) {
-        if e.keyCode == 53 { // Escape
+        if e.keyCode == 53 {
             if !escDown {
                 escDown = true
                 startEscapeHold()
@@ -482,7 +834,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard !e.isARepeat else { return }
-        state.addShape()
+
+        // Number keys spawn that count of shapes
+        var count = 1
+        if let chars = e.charactersIgnoringModifiers, let digit = chars.first, digit.isNumber {
+            let n = digit.wholeNumberValue ?? 1
+            count = n == 0 ? 10 : n
+        }
+        let useJitter = count > 1
+        for _ in 0..<count {
+            state.addShape(jitter: useJitter ? 30 : 0)
+        }
     }
 
     // MARK: Exit: hold Escape for 3 seconds

@@ -1,12 +1,15 @@
 # BabyBoard
 
-A full-screen macOS kiosk app that lets babies safely play with a MacBook. Every mouse movement leaves a colorful trail of dots, every click or keypress spawns pastel shapes — and the entire keyboard and system UI is locked down so nothing else can happen.
+A full-screen macOS kiosk app that lets babies safely play with a MacBook. Every interaction produces colorful visuals — and the entire keyboard and system UI is locked down so nothing else can happen. Designed so that the sensory play implicitly builds foundational computer skills (cause-and-effect, targeting, spatial awareness) without feeling like an educational app.
 
 ## Features
 
 - **Smooth colorful trails** — mouse movement paints smooth, flowing pastel ribbons that cycle through colors and gently fade out
 - **Fun star cursor** — the system cursor is replaced with a large, glowing pastel star that babies can easily track
-- **Shapes on interaction** — clicks and keypresses spawn circles, rounded rectangles, and triangles that gently fade out
+- **Floating bubbles** — translucent bubbles drift across the screen and pop into a burst of particles when the cursor touches them, teaching targeting
+- **Shapes with physics** — clicks and keypresses spawn shapes that fall with soft gravity, bounce off edges, and settle at the bottom before fading
+- **Number key counting** — pressing a number key (1-9) spawns that many shapes; 0 spawns 10. Different keys produce different results, building input differentiation
+- **Click-and-drag ribbons** — dragging creates elastic, curved ribbons between the start and end points, teaching the drag gesture as distinct from clicking
 - **Kiosk mode** — hides the Dock, menu bar, and disables app switching, force quit, and session termination
 - **Baby-proof** — all keyboard input is consumed, scroll events are swallowed, and focus is automatically reclaimed if lost
 - **Info banner** — on launch, an instruction banner tells the adult how to exit, then auto-dismisses after 60 seconds (or tap the X to close it early)
