@@ -4,14 +4,16 @@ A full-screen macOS kiosk app that lets babies safely play with a MacBook. Every
 
 ## Features
 
-- **Colorful trails** — mouse movement paints fading dots in a rotating pastel palette
+- **Smooth colorful trails** — mouse movement paints smooth, flowing pastel ribbons that cycle through colors and gently fade out
+- **Fun star cursor** — the system cursor is replaced with a large, glowing pastel star that babies can easily track
 - **Shapes on interaction** — clicks and keypresses spawn circles, rounded rectangles, and triangles that gently fade out
 - **Kiosk mode** — hides the Dock, menu bar, and disables app switching, force quit, and session termination
 - **Baby-proof** — all keyboard input is consumed, scroll events are swallowed, and focus is automatically reclaimed if lost
+- **Info banner** — on launch, an instruction banner tells the adult how to exit, then auto-dismisses after 60 seconds (or tap the X to close it early)
 
 ## How to Exit
 
-Two adult-friendly exit methods are built in:
+Two adult-friendly exit methods are built in (shown in the launch banner):
 
 1. **Hold Escape for 3 seconds** — a small progress bar appears in the top-right corner. Release to cancel.
 2. **Click 5 times rapidly in the top-right corner** — an "Exit BabyBoard?" confirmation dialog appears.

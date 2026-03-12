@@ -3,11 +3,9 @@ import SwiftUI
 
 // MARK: - Models
 
-struct TrailDot: Identifiable {
-    let id = UUID()
+struct TrailPoint {
     let position: CGPoint
     let color: Color
-    let size: CGFloat
     let born: Date
 }
 
@@ -23,9 +21,10 @@ struct BabyShape: Identifiable {
 // MARK: - State
 
 final class AppState: ObservableObject {
-    @Published var dots: [TrailDot] = []
+    @Published var trail: [TrailPoint] = []
     @Published var shapes: [BabyShape] = []
     @Published var exitProgress: Double = 0
+    @Published var cursorPosition: CGPoint? = nil
 
     private var colorIndex = 0
 
@@ -38,14 +37,14 @@ final class AppState: ObservableObject {
         Color(red: 0.95, green: 0.85, blue: 0.76), // peach
     ]
 
-    static let dotFade: TimeInterval = 2.0
+    static let trailFade: TimeInterval = 2.0
     static let shapeFade: TimeInterval = 3.0
 
-    func addDot(at p: CGPoint) {
-        let c = Self.palette[colorIndex % Self.palette.count]
+    func addTrailPoint(at p: CGPoint) {
+        let c = Self.palette[(colorIndex / 20) % Self.palette.count]
         colorIndex += 1
-        dots.append(TrailDot(position: p, color: c, size: .random(in: 10...18), born: Date()))
-        if dots.count > 150 { dots.removeFirst(dots.count - 150) }
+        trail.append(TrailPoint(position: p, color: c, born: Date()))
+        if trail.count > 300 { trail.removeFirst(trail.count - 300) }
     }
 
     func addShape(at p: CGPoint? = nil) {
@@ -66,12 +65,16 @@ final class AppState: ObservableObject {
 
     func prune() {
         let now = Date()
-        dots.removeAll { now.timeIntervalSince($0.born) > Self.dotFade }
+        trail.removeAll { now.timeIntervalSince($0.born) > Self.trailFade }
         shapes.removeAll { now.timeIntervalSince($0.born) > Self.shapeFade }
     }
 
-    func dotAlpha(_ d: TrailDot, _ now: Date) -> Double {
-        max(0, 1 - now.timeIntervalSince(d.born) / Self.dotFade)
+    func trailAlpha(_ t: TrailPoint, _ now: Date) -> Double {
+        max(0, 1 - now.timeIntervalSince(t.born) / Self.trailFade)
+    }
+
+    var cursorColor: Color {
+        trail.last?.color ?? Self.palette[0]
     }
 
     func shapeAlpha(_ s: BabyShape, _ now: Date) -> Double {
@@ -92,6 +95,7 @@ extension Notification.Name {
 struct BabyView: View {
     @ObservedObject var state: AppState
     @State private var showExitConfirm = false
+    @State private var showBanner = true
     private let bg = Color(red: 0.98, green: 0.97, blue: 0.95)
 
     var body: some View {
@@ -131,20 +135,59 @@ struct BabyView: View {
                         }
                     }
 
-                    // Trail dots (drawn on top)
-                    for d in state.dots {
-                        let a = state.dotAlpha(d, now)
-                        guard a > 0.01 else { continue }
-                        ctx.opacity = a
-                        let r = CGRect(
-                            x: d.position.x - d.size / 2,
-                            y: d.position.y - d.size / 2,
-                            width: d.size, height: d.size
-                        )
-                        ctx.fill(Path(ellipseIn: r), with: .color(d.color))
+                    // Smooth trail (drawn on top of shapes)
+                    let trailWidth: CGFloat = 12
+                    if state.trail.count >= 2 {
+                        for i in 1..<state.trail.count {
+                            let prev = state.trail[i - 1]
+                            let curr = state.trail[i]
+                            // Don't connect points with large time gaps (mouse paused)
+                            guard curr.born.timeIntervalSince(prev.born) < 0.15 else { continue }
+                            let alpha = state.trailAlpha(curr, now)
+                            guard alpha > 0.01 else { continue }
+                            ctx.opacity = alpha
+                            var seg = Path()
+                            seg.move(to: prev.position)
+                            seg.addLine(to: curr.position)
+                            ctx.stroke(
+                                seg,
+                                with: .color(curr.color),
+                                style: StrokeStyle(lineWidth: trailWidth, lineCap: .round, lineJoin: .round)
+                            )
+                        }
                     }
 
                     ctx.opacity = 1
+
+                    // Custom star cursor
+                    if let cp = state.cursorPosition {
+                        // Soft glow
+                        ctx.opacity = 0.25
+                        ctx.fill(
+                            Path(ellipseIn: CGRect(x: cp.x - 26, y: cp.y - 26, width: 52, height: 52)),
+                            with: .color(state.cursorColor)
+                        )
+                        // Star shape
+                        ctx.opacity = 1.0
+                        let outerR: CGFloat = 18, innerR: CGFloat = 8
+                        var star = Path()
+                        for i in 0..<10 {
+                            let r: CGFloat = i % 2 == 0 ? outerR : innerR
+                            let angle = Double(i) * .pi / 5.0 - .pi / 2.0
+                            let pt = CGPoint(
+                                x: cp.x + CGFloat(cos(angle)) * r,
+                                y: cp.y + CGFloat(sin(angle)) * r
+                            )
+                            if i == 0 { star.move(to: pt) } else { star.addLine(to: pt) }
+                        }
+                        star.closeSubpath()
+                        ctx.fill(star, with: .color(state.cursorColor))
+                        ctx.stroke(
+                            star,
+                            with: .color(.white.opacity(0.9)),
+                            style: StrokeStyle(lineWidth: 2)
+                        )
+                    }
 
                     // Exit progress indicator (tiny bar, top-right)
                     if state.exitProgress > 0 {
@@ -180,7 +223,54 @@ struct BabyView: View {
                     onCancel: { showExitConfirm = false }
                 )
             }
+
+            // Instruction banner (top)
+            if showBanner {
+                VStack {
+                    InfoBanner(onDismiss: { withAnimation { showBanner = false } })
+                    Spacer()
+                }
+                .ignoresSafeArea()
+                .transition(.move(edge: .top))
+            }
         }
+        .onAppear {
+            // Auto-dismiss banner after 60 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+                withAnimation { showBanner = false }
+            }
+        }
+    }
+}
+
+// MARK: - Info Banner
+
+struct InfoBanner: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Welcome to BabyBoard")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Text("To exit: hold Escape for 3 seconds, or click 5 times rapidly in the top-right corner.")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+            }
+            Spacer()
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white.opacity(0.8))
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(.white.opacity(0.2)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(Color(red: 0.25, green: 0.25, blue: 0.30))
     }
 }
 
@@ -297,6 +387,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ]
 
         NSApp.activate()
+        NSCursor.hide()
 
         setupMonitors()
 
@@ -327,10 +418,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        NSCursor.unhide()
         NSApp.presentationOptions = []
     }
 
     func performExit() {
+        NSCursor.unhide()
         allowTermination = true
         NSApp.presentationOptions = []
         NSApp.terminate(nil)
@@ -372,10 +465,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func onMouse(_ e: NSEvent) {
         let now = Date()
+        let h = NSScreen.main!.frame.height
+        let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
+        state.cursorPosition = pos
         guard now.timeIntervalSince(lastMouse) > 0.016 else { return } // ~60fps
         lastMouse = now
-        let h = NSScreen.main!.frame.height
-        state.addDot(at: CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y))
+        state.addTrailPoint(at: pos)
     }
 
     func onKeyDown(_ e: NSEvent) {
