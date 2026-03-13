@@ -1,2 +1,6 @@
 BabyBoard.app/
+BabyBoard.xcodeproj/
 *.iconset/
+*.xcuserdata/
+xcuserdata/
+DerivedData/
