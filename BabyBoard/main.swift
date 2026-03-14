@@ -839,8 +839,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return e }
             let h = NSScreen.main!.frame.height
             let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
-            if (self.state.showBanner && pos.y < self.bannerHeight) || self.state.showExitConfirm {
-                return e // let SwiftUI handle UI clicks
+            if self.state.showExitConfirm {
+                return e
+            }
+            if self.state.showBanner && pos.y < self.bannerHeight {
+                withAnimation { self.state.showBanner = false }
+                return e
             }
             self.state.startDrag(at: pos)
             return e
