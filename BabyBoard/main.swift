@@ -834,18 +834,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return e
         }
 
-        // Left mouse down -> start drag tracking (skip banner zone)
+        // Left mouse down -> start drag tracking
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] e in
             guard let self else { return e }
-            let h = NSScreen.main!.frame.height
-            let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
             if self.state.showExitConfirm {
                 return e
             }
-            if self.state.showBanner && pos.y < self.bannerHeight {
-                withAnimation { self.state.showBanner = false }
+            if self.state.showBanner {
+                self.state.showBanner = false
                 return e
             }
+            let h = NSScreen.main!.frame.height
+            let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
             self.state.startDrag(at: pos)
             return e
         }
@@ -864,7 +864,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return e }
             let h = NSScreen.main!.frame.height
             let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
-            if (self.state.showBanner && pos.y < self.bannerHeight) || self.state.showExitConfirm {
+            if self.state.showBanner || self.state.showExitConfirm {
                 return e
             }
             if let start = self.state.dragStart {
@@ -910,8 +910,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let h = NSScreen.main!.frame.height
         let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
 
-        // Show system cursor over banner or exit confirm overlay
-        let inUIZone = (state.showBanner && pos.y < bannerHeight) || state.showExitConfirm
+        // Show system cursor over UI overlays
+        let inUIZone = state.showBanner || state.showExitConfirm
         if inUIZone {
             if cursorIsHidden {
                 NSCursor.unhide()
