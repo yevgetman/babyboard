@@ -86,6 +86,7 @@ final class AppState: ObservableObject {
     @Published var dragStart: CGPoint? = nil
     @Published var dragCurrent: CGPoint? = nil
     @Published var showBanner = true
+    @Published var showExitConfirm = false
 
     private var colorIndex = 0
     private var lastTick: Date = Date()
@@ -375,7 +376,6 @@ extension Notification.Name {
 
 struct BabyView: View {
     @ObservedObject var state: AppState
-    @State private var showExitConfirm = false
     private let bg = Color(red: 0.98, green: 0.97, blue: 0.95)
 
     var body: some View {
@@ -603,17 +603,17 @@ struct BabyView: View {
             VStack {
                 HStack {
                     Spacer()
-                    ExitTapZone(state: state, showConfirm: $showExitConfirm)
+                    ExitTapZone(state: state, showConfirm: $state.showExitConfirm)
                         .frame(width: 44, height: 44)
                 }
                 Spacer()
             }
             .ignoresSafeArea()
 
-            if showExitConfirm {
+            if state.showExitConfirm {
                 ExitConfirmOverlay(
                     onExit: { state.requestExit() },
-                    onCancel: { showExitConfirm = false }
+                    onCancel: { state.showExitConfirm = false }
                 )
             }
 
@@ -839,8 +839,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return e }
             let h = NSScreen.main!.frame.height
             let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
-            if self.state.showBanner && pos.y < self.bannerHeight {
-                return e // let SwiftUI handle banner clicks
+            if (self.state.showBanner && pos.y < self.bannerHeight) || self.state.showExitConfirm {
+                return e // let SwiftUI handle UI clicks
             }
             self.state.startDrag(at: pos)
             return e
@@ -860,7 +860,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return e }
             let h = NSScreen.main!.frame.height
             let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
-            if self.state.showBanner && pos.y < self.bannerHeight {
+            if (self.state.showBanner && pos.y < self.bannerHeight) || self.state.showExitConfirm {
                 return e
             }
             if let start = self.state.dragStart {
@@ -906,8 +906,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let h = NSScreen.main!.frame.height
         let pos = CGPoint(x: e.locationInWindow.x, y: h - e.locationInWindow.y)
 
-        // Show system cursor over banner, hide elsewhere
-        if state.showBanner && pos.y < bannerHeight {
+        // Show system cursor over banner or exit confirm overlay
+        let inUIZone = (state.showBanner && pos.y < bannerHeight) || state.showExitConfirm
+        if inUIZone {
             if cursorIsHidden {
                 NSCursor.unhide()
                 cursorIsHidden = false
